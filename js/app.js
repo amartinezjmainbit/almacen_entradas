@@ -6,13 +6,14 @@
 
 const STORAGE_HISTORY = 'almacen.entradas.historial';
 const STORAGE_THEME = 'almacen.entradas.theme';
+const STORAGE_THEME_HINT = 'almacen.entradas.temaHintVisto';
 
 let historial = [];          // caché local persistida (localStorage)
 let entradas = [];           // dataset actualmente mostrado en la vista "Entradas"
 let entradasLoaded = false;  // ya se intentó cargar al menos una vez
 let sortState = { col: 'Fecha', dir: 'desc' };
 
-const REGISTROS_POR_PAGINA = 100;
+const REGISTROS_POR_PAGINA = 70;
 let paginaActual = 1;
 
 // Columnas con texto libre largo (pedidos con notas de compra completas, un
@@ -31,7 +32,6 @@ document.addEventListener('DOMContentLoaded', () => {
   showTodayDate();
   loadHistorial();
   populateFilterOptions();
-
   document.getElementById('entryForm').addEventListener('submit', onSubmit);
   document.getElementById('resetBtn').addEventListener('click', () => {
     document.getElementById('entryForm').reset();
@@ -49,6 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('themeDotsBtn').addEventListener('click', e => {
     e.stopPropagation();
     document.getElementById('themePanel').classList.toggle('hidden');
+    document.getElementById('themeHint').classList.add('hidden');
   });
   document.querySelectorAll('.theme-opt').forEach(opt => {
     opt.addEventListener('click', () => setTheme(opt.dataset.themeId));
@@ -91,6 +92,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const td = e.target.closest('.td-clamp');
     if (td) td.classList.toggle('expanded');
   });
+
+  // La vista inicial ya es "Inicio" por el HTML — pasa por switchView() para
+  // que dispare el mismo aviso de tema que al navegar de vuelta al home.
+  switchView('inicio');
 });
 
 // ---------- Navegación entre vistas ----------
@@ -105,6 +110,7 @@ function switchView(view) {
   document.getElementById('sidebar').classList.toggle('hidden', view === 'inicio');
   document.getElementById('topTitleGroup').classList.toggle('hidden', view === 'inicio');
   if (view === 'entradas' && !entradasLoaded) loadEntradas();
+  if (view === 'inicio') mostrarAvisoTema();
 }
 
 // ---------- Formulario ----------
@@ -583,7 +589,7 @@ function isReadConfigured() {
 const THEMES = ['dark', 'blue-dark', 'light', 'gray'];
 
 function initTheme() {
-  const saved = localStorage.getItem(STORAGE_THEME) || 'dark';
+  const saved = localStorage.getItem(STORAGE_THEME) || 'light';
   setTheme(saved);
 }
 
@@ -613,8 +619,6 @@ function showTodayDate() {
   const hoy = fechaLargaHoy();
   const topbarDate = document.getElementById('todayDate');
   if (topbarDate) topbarDate.textContent = hoy;
-  const portalDate = document.getElementById('portalDate');
-  if (portalDate) portalDate.textContent = hoy;
   const footerText = document.getElementById('footerText');
   if (footerText) footerText.textContent = `Entradas Almacén ${new Date().getFullYear()} — Mainbit · © Mainbit. Todos los derechos reservados.`;
 }
@@ -622,12 +626,24 @@ function showTodayDate() {
 // ---------- Utilidades ----------
 
 let toastTimer;
-function toast(msg, kind) {
+function toast(msg, kind, duracion = 4000) {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.className = 'show ' + (kind === 'err' ? 'err' : 'ok');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.className = ''; }, 4000);
+  toastTimer = setTimeout(() => { el.className = ''; }, duracion);
+}
+
+// Aviso de una sola vez (por navegador) para que los usuarios nuevos sepan
+// que pueden cambiar el tema — con los puntitos junto al logo.
+function mostrarAvisoTema() {
+  if (localStorage.getItem(STORAGE_THEME_HINT)) return;
+  localStorage.setItem(STORAGE_THEME_HINT, '1');
+  setTimeout(() => {
+    const hint = document.getElementById('themeHint');
+    hint.classList.remove('hidden');
+    setTimeout(() => hint.classList.add('hidden'), 7000);
+  }, 1200);
 }
 
 function escapeHtml(str) {
