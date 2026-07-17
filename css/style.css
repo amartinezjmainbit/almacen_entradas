@@ -153,6 +153,24 @@ body {
   box-shadow: var(--shadow);
   z-index: 60;
 }
+
+.theme-hint {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 210px;
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--t1);
+  box-shadow: var(--shadowh);
+  z-index: 55;
+}
+
 .theme-panel-title {
   font-size: 9.5px;
   font-weight: 700;
@@ -415,7 +433,6 @@ body {
 .portal-title-lg { font-size: 48px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; line-height: 1.1; }
 
 .portal-sub  { font-size: 12.5px; color: #cbd5e1; max-width: 540px; margin-top: 8px; }
-.portal-date { font-size: 11px; font-weight: 600; color: #94a3b8; margin-top: 14px; }
 
 .portal-actions { display: flex; gap: 32px; justify-content: center; flex-wrap: wrap; margin-top: 26px; }
 
