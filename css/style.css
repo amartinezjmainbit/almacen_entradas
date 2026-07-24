@@ -741,6 +741,65 @@ tr:last-child td { border-bottom: none; }
 #toast.ok   { border-color: var(--success); }
 #toast.err  { border-color: var(--danger); }
 
+/* ---------- Modal de confirmación ---------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 8, 16, .6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 100;
+  opacity: 0;
+  pointer-events: none;
+  transition: var(--trans);
+}
+.modal-overlay.show { opacity: 1; pointer-events: auto; }
+
+.modal-box {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadowh);
+  padding: 30px 32px 24px;
+  max-width: 360px;
+  width: 100%;
+  text-align: center;
+  transform: translateY(14px) scale(.96);
+  transition: var(--trans);
+}
+.modal-overlay.show .modal-box { transform: translateY(0) scale(1); }
+
+.modal-icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  background: var(--success);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--t1);
+  margin-bottom: 6px;
+}
+
+.modal-msg {
+  font-size: 13px;
+  color: var(--t2);
+  line-height: 1.5;
+  margin-bottom: 22px;
+}
+
 /* ---------- Responsive ---------- */
 
 @media (max-width: 640px) {

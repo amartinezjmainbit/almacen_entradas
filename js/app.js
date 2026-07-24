@@ -11,7 +11,11 @@ const STORAGE_THEME_HINT = 'almacen.entradas.temaHintVisto';
 let historial = [];          // caché local persistida (localStorage)
 let entradas = [];           // dataset actualmente mostrado en la vista "Entradas"
 let entradasLoaded = false;  // ya se intentó cargar al menos una vez
-let sortState = { col: 'Fecha', dir: 'desc' };
+// Por default se ordena por orden de captura (más nuevo primero), no por
+// Fecha — así una entrada recién registrada siempre cae en la primera fila,
+// aunque su Fecha sea retroactiva. El usuario puede cambiarlo con un clic
+// en cualquier encabezado de columna.
+let sortState = { col: '_sortKey', dir: 'desc' };
 
 const REGISTROS_POR_PAGINA = 70;
 let paginaActual = 1;
@@ -40,6 +44,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('exportBtn').addEventListener('click', exportCsv);
   document.getElementById('exportExcelBtn').addEventListener('click', exportExcel);
   document.getElementById('refreshBtn').addEventListener('click', () => loadEntradas());
+
+  document.getElementById('successModalClose').addEventListener('click', hideModal);
+  document.getElementById('successModal').addEventListener('click', e => {
+    if (e.target.id === 'successModal') hideModal();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') hideModal();
+  });
 
   document.querySelectorAll('.nav-item, .portal-circle').forEach(btn => {
     if (!btn.dataset.view) return; // p. ej. el enlace externo "Dashboard"
@@ -95,12 +107,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // La vista inicial ya es "Inicio" por el HTML — pasa por switchView() para
   // que dispare el mismo aviso de tema que al navegar de vuelta al home.
-  switchView('inicio');
+  // Se reemplaza (no se apila) la entrada del historial para que sea el
+  // punto de partida, no un salto extra antes de la app.
+  const VISTAS_VALIDAS = ['inicio', 'registrar', 'entradas'];
+  let vistaInicial = (location.hash || '#inicio').slice(1);
+  if (!VISTAS_VALIDAS.includes(vistaInicial)) vistaInicial = 'inicio';
+  history.replaceState({ view: vistaInicial }, '', '#' + vistaInicial);
+  switchView(vistaInicial, false);
 });
 
 // ---------- Navegación entre vistas ----------
 
-function switchView(view) {
+// pushHistory=false se usa cuando la navegación ya viene del historial
+// (botón "Atrás"/"Adelante"), para no volver a apilar la misma entrada.
+function switchView(view, pushHistory = true) {
   document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
   document.getElementById('view-' + view).classList.remove('hidden');
   document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.view === view));
@@ -111,7 +131,16 @@ function switchView(view) {
   document.getElementById('topTitleGroup').classList.toggle('hidden', view === 'inicio');
   if (view === 'entradas' && !entradasLoaded) loadEntradas();
   if (view === 'inicio') mostrarAvisoTema();
+
+  // Cada cambio de vista queda como su propia entrada en el historial del
+  // navegador — si no, "Atrás" se salta la app entera y cae directo en el
+  // redireccionamiento de autenticación de Microsoft que abrió la página.
+  if (pushHistory) history.pushState({ view }, '', '#' + view);
 }
+
+window.addEventListener('popstate', e => {
+  switchView(e.state?.view || 'inicio', false);
+});
 
 // ---------- Formulario ----------
 
@@ -208,12 +237,16 @@ async function onSubmit(e) {
     ...values,
     _timestamp: new Date().toISOString(),
     _estado: isCreateConfigured() ? 'enviando' : 'local',
+    // Más grande que cualquier ID real de SharePoint, para que quede primero
+    // de inmediato sin esperar al siguiente refresh (que le pondrá su _sortKey
+    // real basado en el ID que le asigne la lista).
+    _sortKey: Date.now(),
   };
 
   if (!isCreateConfigured()) {
     saveHistorial(record);
     pushEntradaLocal(record);
-    toast('Entrada guardada localmente (sin endpoint de creación configurado todavía).', 'ok');
+    showModal('Se guardó localmente (sin endpoint de creación configurado todavía).');
     document.getElementById('entryForm').reset();
     setDefaultDate();
     return;
@@ -229,7 +262,7 @@ async function onSubmit(e) {
     record._estado = 'enviado';
     saveHistorial(record);
     pushEntradaLocal(record);
-    toast('Entrada registrada en SharePoint.', 'ok');
+    showModal('Tu entrada quedó registrada en SharePoint.');
     document.getElementById('entryForm').reset();
     setDefaultDate();
   } catch (err) {
@@ -277,6 +310,7 @@ function parseListItem(raw) {
   });
   rec._estado = 'enviado';
   rec._id = raw.ID ?? raw.Id ?? null;
+  rec._sortKey = Number(rec._id) || 0;
   return rec;
 }
 
@@ -413,7 +447,28 @@ function getFilteredSorted() {
   });
 
   const { col, dir } = sortState;
-  rows.sort((a, b) => {
+
+  // Orden por default (sin que el usuario haya tocado ningún encabezado):
+  // de ORDEN_CAPTURA_DESDE en adelante, más nuevo primero por captura; antes
+  // de esa fecha se conserva el orden de siempre (por Fecha), sin mezclarlos.
+  if (col === '_sortKey') {
+    const recientes = rows.filter(r => (ddmmyyyyToIso(r['Fecha']) ?? '') >= ORDEN_CAPTURA_DESDE);
+    const anteriores = rows.filter(r => (ddmmyyyyToIso(r['Fecha']) ?? '') < ORDEN_CAPTURA_DESDE);
+    recientes.sort(compararPorColumna('_sortKey', 'desc'));
+    anteriores.sort(compararPorColumna('Fecha', 'desc'));
+    return [...recientes, ...anteriores];
+  }
+
+  rows.sort(compararPorColumna(col, dir));
+  return rows;
+}
+
+// Corte de la nueva regla de orden por captura — antes de esta fecha, la
+// vista "Entradas" sigue ordenándose como siempre (por Fecha).
+const ORDEN_CAPTURA_DESDE = '2026-07-17';
+
+function compararPorColumna(col, dir) {
+  return (a, b) => {
     let av = a[col] ?? '', bv = b[col] ?? '';
     if (col === 'Fecha') {
       av = ddmmyyyyToIso(av) ?? '';
@@ -425,8 +480,7 @@ function getFilteredSorted() {
     if (av < bv) return dir === 'asc' ? -1 : 1;
     if (av > bv) return dir === 'asc' ? 1 : -1;
     return 0;
-  });
-  return rows;
+  };
 }
 
 function renderEntradas() {
@@ -555,19 +609,122 @@ function rangoArchivoSufijo() {
   return 'todas';
 }
 
-function exportExcel() {
+// Columnas del Excel oficial FO-MBT-ALM-02 (hoja "Ingresado") — mismo orden,
+// encabezados y anchos que el formato de control de documento ya en uso.
+// "No. de entrada" se deja en blanco: es de solo lectura y hoy no se lee del
+// endpoint hacia el modelo de datos de la app.
+const EXCEL_TEMPLATE_COLUMNS = [
+  { header: 'FECHA',            width: 15.29, get: r => r['Fecha'] },
+  { header: 'No. de entrada',   width: 17.14, get: () => '' },
+  { header: 'Estatus',          width: 20,    get: r => r['Estatus'] },
+  { header: 'Texto libre',      width: 27.43, get: r => r['Correo electrónico'] },
+  { header: 'Pedido / Reporte', width: 25.57, get: r => r['Pedido / Reporte'], align: 'left' },
+  { header: 'O.C.',             width: 10,    get: r => r['O.C.'] },
+  { header: 'Almacén',          width: 18.14, get: r => r['Almacén'] },
+  { header: 'Descripción',      width: 49.43, get: r => r['Descripción'],  align: 'left' },
+  { header: 'No. Parte',        width: 37,    get: r => r['No. Parte'],    align: 'left' },
+  { header: 'Cantidad',         width: 12.71, get: r => r['Cantidad'] },
+  { header: 'Proveedor',        width: 44.29, get: r => r['Proveedor'],    align: 'left' },
+  { header: 'Proyecto',         width: 27.86, get: r => r['Proyecto'],     align: 'left' },
+  { header: 'Comentario',       width: 23.57, get: r => r['Comentario'],   align: 'left' },
+  { header: 'Empresa',          width: 21.14, get: r => r['Empresa'] },
+];
+
+async function exportExcel() {
   const rows = getFilteredSorted();
   if (!rows.length) {
     toast('No hay entradas para exportar con los filtros actuales.', 'err');
     return;
   }
-  const cols = FIELDS.map(f => f.label);
-  const data = [cols, ...rows.map(r => cols.map(c => r[c] ?? ''))];
 
-  const ws = XLSX.utils.aoa_to_sheet(data);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Entradas');
-  XLSX.writeFile(wb, `entradas-almacen-${rangoArchivoSufijo()}.xlsx`);
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Ingresado', {
+    pageSetup: { orientation: 'landscape', scale: 35 },
+  });
+  ws.columns = EXCEL_TEMPLATE_COLUMNS.map(c => ({ width: c.width }));
+  const lastCol = String.fromCharCode(65 + EXCEL_TEMPLATE_COLUMNS.length - 1); // 'N'
+
+  const logoId = wb.addImage({ base64: 'data:image/png;base64,' + EXCEL_LOGO_BASE64, extension: 'png' });
+  ws.addImage(logoId, { tl: { col: 1, row: 1 }, ext: { width: 150, height: 72 } });
+
+  ws.mergeCells(`D2:${lastCol}5`);
+  const title = ws.getCell('D2');
+  title.value = 'FO-MBT-ALM-02 REPORTE DE ENTRADAS ALMACÉN';
+  title.font = { bold: true, size: 16, name: 'Arial' };
+  title.alignment = { vertical: 'middle', horizontal: 'right' };
+
+  ws.mergeCells(`K6:${lastCol}6`);
+  ws.getCell('K6').value = 'Clasificación: Sensible';
+  ws.mergeCells(`L7:${lastCol}7`);
+  ws.getCell('L7').value = 'Versión:03';
+  ws.mergeCells(`M9:${lastCol}9`);
+  ws.getCell('M9').value = 'Publicación: 14-Ene-2026';
+  ['K6', 'L7', 'M9'].forEach(ref => {
+    ws.getCell(ref).font = { size: 9, color: { argb: 'FF666666' }, name: 'Arial' };
+    ws.getCell(ref).alignment = { horizontal: 'right' };
+  });
+  ws.getCell('M12').value = 'Fecha de revisión';
+  ws.getCell('M12').font = { size: 9, color: { argb: 'FFFFFFFF' }, name: 'Arial' };
+  ws.getCell('M12').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A4274' } };
+  ws.getCell('M12').alignment = { horizontal: 'center', vertical: 'center' };
+  ws.getCell('N12').value = 'dd/mm/aaaa';
+  ws.getCell('N12').font = { size: 9, italic: true, name: 'Arial' };
+  ws.getCell('N12').alignment = { horizontal: 'center', vertical: 'center' };
+  ws.getCell('N12').border = {
+    top: { style: 'thin', color: { argb: 'FFBFBFBF' } },
+    bottom: { style: 'thin', color: { argb: 'FFBFBFBF' } },
+    left: { style: 'thin', color: { argb: 'FFBFBFBF' } },
+    right: { style: 'thin', color: { argb: 'FFBFBFBF' } },
+  };
+
+  const headerRowIdx = 14;
+  const headerRow = ws.getRow(headerRowIdx);
+  EXCEL_TEMPLATE_COLUMNS.forEach((c, i) => {
+    const cell = headerRow.getCell(i + 1);
+    cell.value = c.header;
+    cell.font = { color: { argb: 'FFFFFFFF' }, size: 11, name: 'Arial' };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A4274' } };
+    cell.alignment = { horizontal: 'center', vertical: 'center' };
+    cell.border = {
+      left: { style: 'thin', color: { argb: 'FFBFBFBF' } },
+      right: { style: 'thin', color: { argb: 'FFBFBFBF' } },
+    };
+  });
+
+  rows.forEach((r, i) => {
+    const row = ws.getRow(headerRowIdx + 1 + i);
+    const band = i % 2 === 1;
+    EXCEL_TEMPLATE_COLUMNS.forEach((c, ci) => {
+      const cell = row.getCell(ci + 1);
+      cell.value = c.get(r) ?? '';
+      cell.font = { size: 11, name: 'Arial' };
+      cell.alignment = { horizontal: c.align || 'center', vertical: 'center' };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+        bottom: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+        left: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+        right: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+      };
+      if (band) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
+    });
+  });
+
+  const footerRowIdx = headerRowIdx + 1 + rows.length + 1;
+  ws.mergeCells(`A${footerRowIdx}:${lastCol}${footerRowIdx}`);
+  const footer = ws.getCell(`A${footerRowIdx}`);
+  footer.value = 'PROHIBIDA LA REPRODUCCIÓN TOTAL O PARCIAL DE ESTE DOCUMENTO SIN PREVIA AUTORIZACIÓN\n'
+    + 'ESTE DOCUMENTO IMPRESO NO ES VÁLIDO YA QUE EL DOCUMENTO VIGENTE ES EL QUE SE ENCUENTRA EN EL SISTEMA INFORMÁTICO.';
+  footer.font = { size: 8, italic: true, color: { argb: 'FF808080' }, name: 'Arial' };
+  footer.alignment = { horizontal: 'center', wrapText: true };
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `entradas-almacen-${rangoArchivoSufijo()}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ---------- Endpoints ----------
@@ -632,6 +789,16 @@ function toast(msg, kind, duracion = 4000) {
   el.className = 'show ' + (kind === 'err' ? 'err' : 'ok');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.className = ''; }, duracion);
+}
+
+function showModal(msg) {
+  document.getElementById('successModalMsg').textContent = msg;
+  document.getElementById('successModal').classList.remove('hidden');
+  requestAnimationFrame(() => document.getElementById('successModal').classList.add('show'));
+}
+
+function hideModal() {
+  document.getElementById('successModal').classList.remove('show');
 }
 
 // Aviso de una sola vez (por navegador) para que los usuarios nuevos sepan

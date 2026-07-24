@@ -62,4 +62,6 @@ const FIELDS = [
   { id: 'proyecto', key: 'proyecto', label: 'Proyecto', type: 'text' },
   { id: 'comentario', key: 'comentario', label: 'Comentario', type: 'textarea', full: true, emptyValue: 'Sin comentarios' },
   { id: 'empresa', key: 'empresa', label: 'Empresa', type: 'combo', options: CONFIG.EMPRESA, required: true, choice: true },
+  { id: 'ubicacion', key: 'Ubicacion', label: 'Ubicación', type: 'text' },
+  { id: 'total', key: 'Total', label: 'Total', type: 'text' },
 ];
